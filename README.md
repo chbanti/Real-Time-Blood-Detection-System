@@ -1,6 +1,6 @@
 # Blood Detection & Segmentation Mobile App
 
-A Flutter-based mobile application for blood detection and segmentation using TensorFlow Lite (TFLite) models. The application allows users to select or capture an image, perform AI inference on-device, and display the prediction results.
+A Flutter-based mobile application for blood detection and segmentation using yolo and  mobilenetV3 models. The application allows users to select or capture an image, perform AI inference on-device, and display the prediction results.
 
 ## Features
 
