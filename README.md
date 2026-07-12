@@ -43,8 +43,7 @@ Before running the project, make sure the following software is installed:
 # Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/your-repository.git
-cd your-repository
+git clone https://github.com/chbanti/Real-Time-Blood-Detection-System/tree/master
 ```
 
 ---
