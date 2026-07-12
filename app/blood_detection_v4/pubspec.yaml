@@ -1,0 +1,39 @@
+name: blood_detection_v4
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  tflite_flutter: ^0.11.0
+  image_picker: ^1.1.2
+  video_player: ^2.9.1
+  path_provider: ^2.1.4
+  camera: ^0.11.0
+  image: ^4.2.0
+  permission_handler: ^11.3.1
+  ffmpeg_kit_min_gpl: ^6.0.3+2-LTS
+
+dev_dependencies:
+  flutter_launcher_icons: ^0.13.1
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/Logo_1024px.png"
+  adaptive_icon_background: "#1A73E8"  # Change to your color
+  adaptive_icon_foreground: "assets/icon/Logo_1024px.png"
+  remove_alpha_ios: true
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/models/detector.tflite
+    - assets/models/segmentation.tflite
+    - assets/icon/Logo_1024px.png
