@@ -1,13 +1,14 @@
 # Blood Detection & Segmentation Mobile App
 
-A Flutter-based mobile application for blood detection and segmentation using yolo and  mobilenetV3 models. The application allows users to select or capture an image, perform AI inference on-device, and display the prediction results.
+A Flutter-based mobile application for blood detection and segmentation using yolo and  mobilenetV3 models. The application allows users to select or capture an image also support realtime implementation on live cam, perform AI inference on-device, and display the prediction results.
 
 ## Features
 
-- Blood detection using a lightweight AI model
+- Blood detection using a AI model
 - Blood segmentation with heatmap visualization
 - Capture images using the camera
 - Select images from the gallery
+- Also able  a feature of models on live webcam (Real time interface)
 - Fast on-device inference with TensorFlow Lite
 - User-friendly interface
 
