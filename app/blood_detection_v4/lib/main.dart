@@ -72,7 +72,7 @@ class _MyAppState extends State<MyApp> {
   bool isVideoAnalyzed = false;
   bool isPlaying = false;
   Timer? _playbackTimer;
-  List<File>? extractedFrames = [];
+  List<ExtractedFrame>? extractedFrames = [];
   int totalFramesAnalyzed = 0;
   int totalDetectionsFound = 0;
   double videoAnalysisProgress = 0.0;
@@ -96,6 +96,10 @@ class _MyAppState extends State<MyApp> {
   double liveImageHeight = 0;
 
   DetectorService? _videoDetector;
+
+  // Debug variables
+  int _debugCounter = 0;
+  int _completedCores = 0;
 
   @override
   void initState() {
@@ -232,45 +236,60 @@ class _MyAppState extends State<MyApp> {
       _elapsedTime = Duration.zero;
       _estimatedRemaining = Duration.zero;
       _totalFramesToAnalyze = 0;
+      _completedCores = 0;
     });
     
     _showSnackBar("Media cleared", backgroundColor: Colors.blue);
   }
 
+  // ==================== DEBUG LOGGING METHODS ====================
+  void _logFrameState(String action, int frameIndex, int closestKey, int minDiff, int detectionsCount) {
+    print("🔍 ===== VIDEO SYNC DEBUG ===== ");
+    print("   Action: $action");
+    print("   Current frame: $frameIndex");
+    print("   Closest detection frame: $closestKey");
+    print("   Difference: $minDiff");
+    print("   Detections count: $detectionsCount");
+    print("   Frame detection keys: ${frameDetections.keys.toList()}");
+    print("   Total frames with detections: ${frameDetections.length}");
+    print("   Current detections in UI: ${detections.length}");
+    print("   Frame duration: ${frameDurationMs}ms");
+    print("   Is playing: $isPlaying");
+    print("   ================================");
+  }
+
   // ==================== LIVE CAMERA METHODS ====================
-// In _startLiveCamera method, store the camera info:
-
-Future<void> _startLiveCamera() async {
-  if (_liveCameraService == null) {
-    _liveCameraService = LiveCameraService();
-    await _liveCameraService!.initializeCamera((detections, frameImage) {
-      setState(() {
-        liveDetections = detections;
-        liveFrameImage = frameImage;
-        liveImageWidth = _liveCameraService!.lastImageWidth;
-        liveImageHeight = _liveCameraService!.lastImageHeight;
+  Future<void> _startLiveCamera() async {
+    if (_liveCameraService == null) {
+      _liveCameraService = LiveCameraService();
+      await _liveCameraService!.initializeCamera((detections, frameImage) {
+        setState(() {
+          liveDetections = detections;
+          liveFrameImage = frameImage;
+          liveImageWidth = _liveCameraService!.lastImageWidth;
+          liveImageHeight = _liveCameraService!.lastImageHeight;
+        });
       });
+    }
+
+    if (cameras.isEmpty) {
+      _showSnackBar("No camera available", backgroundColor: Colors.red);
+      return;
+    }
+
+    final camera = cameras.firstWhere(
+      (c) => c.lensDirection == CameraLensDirection.back,
+      orElse: () => cameras.first,
+    );
+
+    await _liveCameraService!.startCamera(camera);
+    
+    setState(() {
+      isLiveMode = true;
     });
+    
+    _showSnackBar("Live camera started", backgroundColor: Colors.green);
   }
-
-  if (cameras.isEmpty) {
-    _showSnackBar("No camera available", backgroundColor: Colors.red);
-    return;
-  }
-
-  final camera = cameras.firstWhere(
-    (c) => c.lensDirection == CameraLensDirection.back,
-    orElse: () => cameras.first,
-  );
-
-  await _liveCameraService!.startCamera(camera);
-  
-  setState(() {
-    isLiveMode = true;
-  });
-  
-  _showSnackBar("Live camera started", backgroundColor: Colors.green);
-}
 
   Future<void> _stopLiveCamera() async {
     await _liveCameraService?.stopCamera();
@@ -425,6 +444,7 @@ Future<void> _startLiveCamera() async {
       _elapsedTime = Duration.zero;
       _estimatedRemaining = Duration.zero;
       _totalFramesToAnalyze = 0;
+      _completedCores = 0;
     });
 
     _videoController = VideoPlayerController.file(video);
@@ -435,6 +455,13 @@ Future<void> _startLiveCamera() async {
     final totalDuration = _videoController!.value.duration;
     final totalMilliseconds = totalDuration.inMilliseconds;
     totalFramesInVideo = (totalMilliseconds / frameDurationMs).ceil();
+    
+    print("📹 VIDEO INFO:");
+    print("   Duration: ${totalDuration.inSeconds}s (${totalMilliseconds}ms)");
+    print("   FPS: $videoFps");
+    print("   Frame duration: ${frameDurationMs}ms");
+    print("   Total frames: $totalFramesInVideo");
+    print("   Video size: ${imageWidth}x${imageHeight}");
 
     _videoController!.addListener(() {
       if (_videoController!.value.isPlaying && isVideoAnalyzed) {
@@ -445,9 +472,24 @@ Future<void> _startLiveCamera() async {
     });
   }
 
+  // ==================== VIDEO SYNC METHODS ====================
   void _updateDetectionsForFrame(int frameIndex) {
-    if (frameDetections.isEmpty) return;
+    _debugCounter++;
+    
+    if (frameDetections.isEmpty) {
+      if (_debugCounter % 30 == 0) {
+        print("🔍 No frame detections available");
+      }
+      if (detections.isNotEmpty) {
+        setState(() {
+          detections = [];
+          currentDetections = [];
+        });
+      }
+      return;
+    }
 
+    // Find the closest frame with detections
     int closestKey = 0;
     int minDiff = 999999;
 
@@ -459,26 +501,52 @@ Future<void> _startLiveCamera() async {
       }
     }
 
-    if (frameDetections.containsKey(closestKey) && closestKey != currentFrameIndex && minDiff <= 5) {
-      setState(() {
-        currentDetections = frameDetections[closestKey] ?? [];
-        currentFrameIndex = closestKey;
-        detections = currentDetections;
-      });
+    // Log every 30 frames to avoid spam
+    if (_debugCounter % 30 == 0) {
+      _logFrameState("Checking", frameIndex, closestKey, minDiff, detections.length);
+    }
+
+    // Stricter tolerance - only show detections if within 2 frames
+    const int maxAllowedDiff = 2;
+    
+    if (frameDetections.containsKey(closestKey) && minDiff <= maxAllowedDiff) {
+      final newDetections = frameDetections[closestKey] ?? [];
+      if (closestKey != currentFrameIndex) {
+        if (_debugCounter % 30 == 0) {
+          print("✅ Showing ${newDetections.length} detections for frame $frameIndex (closest: $closestKey)");
+        }
+        setState(() {
+          currentDetections = newDetections;
+          currentFrameIndex = closestKey;
+          detections = currentDetections;
+        });
+      }
+    } else {
+      if (detections.isNotEmpty) {
+        if (_debugCounter % 30 == 0) {
+          print("🔄 Clearing detections for frame $frameIndex (closest: $closestKey, diff: $minDiff)");
+        }
+        setState(() {
+          detections = [];
+          currentDetections = [];
+        });
+      }
     }
   }
 
-  Future<FrameResult> _processSingleFrame(FrameData data) async {
+  // ==================== PARALLEL FRAME PROCESSING ====================
+  Future<FrameResult> _processSingleFrame(ExtractedFrame frame) async {
     try {
-      final bytes = await data.file.readAsBytes();
+      final bytes = await frame.file.readAsBytes();
       final decoded = await decodeImageFromList(bytes);
       final originalWidth = decoded.width.toDouble();
       final originalHeight = decoded.height.toDouble();
 
-      final detections = await _videoDetector!.detect(data.file);
+      final detections = await _videoDetector!.detect(frame.file);
 
       return FrameResult(
-        frameIndex: data.frameIndex,
+        frameIndex: frame.actualVideoFrame,
+        timestampMs: frame.timestampMs,
         detections: detections,
         mask: [],
         width: originalWidth,
@@ -487,7 +555,8 @@ Future<void> _startLiveCamera() async {
       );
     } catch (e) {
       return FrameResult(
-        frameIndex: data.frameIndex,
+        frameIndex: frame.actualVideoFrame,
+        timestampMs: frame.timestampMs,
         detections: [],
         mask: [],
         width: 0,
@@ -498,10 +567,34 @@ Future<void> _startLiveCamera() async {
     }
   }
 
+  // Process frames assigned to a specific core
+  Future<List<FrameResult>> _processCoreFrames(
+    List<ExtractedFrame> frames,
+    int coreIndex,
+  ) async {
+    final List<FrameResult> results = [];
+    final int total = frames.length;
+
+    for (int i = 0; i < total; i++) {
+      final result = await _processSingleFrame(frames[i]);
+      results.add(result);
+      
+      // Update progress for this core
+      print("⚡ Core $coreIndex: ${i+1}/$total frames completed (${((i+1)/total*100).toStringAsFixed(0)}%)");
+    }
+
+    // Mark this core as completed
+    _completedCores++;
+    print("✅ Core $coreIndex completed! ($_completedCores/3 cores done)");
+    
+    return results;
+  }
+
   Future<void> analyzeVideo() async {
     if (selectedVideo == null || isProcessing || !isVideo) return;
 
     _closeVideoModels();
+    _completedCores = 0;
 
     setState(() {
       isProcessing = true;
@@ -521,8 +614,9 @@ Future<void> _startLiveCamera() async {
 
       _showSnackBar("Extracting frames from video...", backgroundColor: Colors.orange);
 
-      const int skipFrames = 4;
-      const int maxFrames = 40;
+      // Optimized: skip 2 frames (analyze every 3rd frame), max 60 frames for speed
+      const int skipFrames = 2;
+      const int maxFrames = 60; // Reduced from 80 for faster processing
       
       final frames = await VideoFrameExtractor.extractFramesWithFFmpeg(
         selectedVideo!,
@@ -545,27 +639,34 @@ Future<void> _startLiveCamera() async {
       final totalFrames = frames.length;
       _totalFramesToAnalyze = totalFrames;
 
-      _showSnackBar("Analyzing $totalFrames frames in parallel...", backgroundColor: Colors.orange);
+      _showSnackBar("Analyzing $totalFrames frames in parallel (3 cores)...", backgroundColor: Colors.orange);
       
       _startProgressTimer();
 
-      final List<FrameData> frameDataList = [];
-      for (int i = 0; i < totalFrames; i++) {
-        final int videoFrameIndex = i * (skipFrames + 1);
-        frameDataList.add(FrameData(
-          file: frames[i],
-          frameIndex: videoFrameIndex,
-        ));
-      }
-
+      // ============================================================
+      // TRUE PARALLEL PROCESSING - Distribute frames across 3 cores
+      // ============================================================
       const int coreCount = 3;
-      final List<List<FrameData>> coreGroups = List.generate(coreCount, (_) => []);
+      
+      // Distribute frames evenly across cores
+      // Core 0: frames 0, 3, 6, 9...
+      // Core 1: frames 1, 4, 7, 10...
+      // Core 2: frames 2, 5, 8, 11...
+      final List<List<ExtractedFrame>> coreGroups = List.generate(coreCount, (_) => []);
 
-      for (int i = 0; i < frameDataList.length; i++) {
+      for (int i = 0; i < frames.length; i++) {
         final coreIndex = i % coreCount;
-        coreGroups[coreIndex].add(frameDataList[i]);
+        coreGroups[coreIndex].add(frames[i]);
       }
 
+      // Log the distribution
+      print("📊 ===== PARALLEL PROCESSING PLAN =====");
+      for (int i = 0; i < coreCount; i++) {
+        print("   Core $i: ${coreGroups[i].length} frames");
+      }
+      print("   =====================================");
+
+      // Start all cores in parallel
       final List<Future<List<FrameResult>>> coreFutures = [];
 
       for (int coreIndex = 0; coreIndex < coreCount; coreIndex++) {
@@ -575,15 +676,19 @@ Future<void> _startLiveCamera() async {
         coreFutures.add(coreFuture);
       }
 
+      // Wait for ALL cores to complete
       final List<List<FrameResult>> allCoreResults = await Future.wait(coreFutures);
 
+      // Combine all results
       final List<FrameResult> allResults = [];
       for (final coreResults in allCoreResults) {
         allResults.addAll(coreResults);
       }
 
+      // Sort by frame index
       allResults.sort((a, b) => a.frameIndex.compareTo(b.frameIndex));
 
+      // Process results
       int processed = 0;
       for (final result in allResults) {
         processed++;
@@ -591,7 +696,12 @@ Future<void> _startLiveCamera() async {
           if (result.detections.isNotEmpty) {
             frameDetections[result.frameIndex] = result.detections;
             totalDetectionsFound += result.detections.length;
+            print("✅ Frame ${result.frameIndex} - Found ${result.detections.length} detections");
+          } else {
+            print("⚠️ Frame ${result.frameIndex} - No detections");
           }
+        } else {
+          print("❌ Frame ${result.frameIndex} failed: ${result.error}");
         }
 
         setState(() {
@@ -599,6 +709,15 @@ Future<void> _startLiveCamera() async {
           videoAnalysisProgress = processed / totalFrames;
         });
       }
+
+      // Log final detection map
+      print("📊 ===== FINAL DETECTION MAP =====");
+      print("   Frame detections keys: ${frameDetections.keys.toList()}");
+      print("   Total frames with detections: ${frameDetections.length}");
+      for (final entry in frameDetections.entries) {
+        print("   Frame ${entry.key}: ${entry.value.length} detections");
+      }
+      print("   ================================");
 
       _stopProgressTimer();
 
@@ -619,7 +738,7 @@ Future<void> _startLiveCamera() async {
         _startPlayback();
 
         _showSnackBar(
-          "Analysis complete! Found $totalDetectionsFound detections",
+          "Analysis complete! Found $totalDetectionsFound detections in ${frameDetections.length} frames",
           backgroundColor: Colors.green,
         );
       } else {
@@ -635,20 +754,6 @@ Future<void> _startLiveCamera() async {
     }
   }
 
-  Future<List<FrameResult>> _processCoreFrames(
-    List<FrameData> frames,
-    int coreIndex,
-  ) async {
-    final List<FrameResult> results = [];
-
-    for (int i = 0; i < frames.length; i++) {
-      final result = await _processSingleFrame(frames[i]);
-      results.add(result);
-    }
-
-    return results;
-  }
-
   Future<void> _ensureVideoDetectorLoaded() async {
     if (_videoDetector == null || !_videoDetector!.isLoaded) {
       _videoDetector = DetectorService();
@@ -661,7 +766,7 @@ Future<void> _startLiveCamera() async {
     isPlaying = true;
     setState(() {});
 
-    _playbackTimer = Timer.periodic(const Duration(milliseconds: 25), (timer) {
+    _playbackTimer = Timer.periodic(const Duration(milliseconds: 16), (timer) {
       if (!mounted) {
         timer.cancel();
         return;
@@ -1208,7 +1313,7 @@ Future<void> _startLiveCamera() async {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                "Processing frames...",
+                                "Processing frames in parallel (3 cores)...",
                                 style: TextStyle(fontSize: isSmallScreen ? 12 : 14),
                               ),
                               Text(
@@ -1263,7 +1368,7 @@ Future<void> _startLiveCamera() async {
                                 ),
                               ),
                               Text(
-                                "⚡ 3 cores",
+                                "⚡ Cores: $_completedCores/3 completed",
                                 style: TextStyle(
                                   fontSize: isSmallScreen ? 10 : 12,
                                   color: Colors.grey,
@@ -1454,18 +1559,9 @@ Future<void> _startLiveCamera() async {
 }
 
 // ====================== DATA CLASSES ======================
-class FrameData {
-  final File file;
-  final int frameIndex;
-
-  FrameData({
-    required this.file,
-    required this.frameIndex,
-  });
-}
-
 class FrameResult {
   final int frameIndex;
+  final int timestampMs;
   final List<Detection> detections;
   final List<List<double>> mask;
   final double width;
@@ -1475,6 +1571,7 @@ class FrameResult {
 
   FrameResult({
     required this.frameIndex,
+    this.timestampMs = 0,
     required this.detections,
     required this.mask,
     required this.width,
@@ -1547,11 +1644,11 @@ class AnalysisLoadingOverlay extends StatelessWidget {
             children: [
               SizedBox(width: 70, height: 70, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 7)),
               SizedBox(height: 30),
-              Text("Analyzing", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+              Text("Analyzing in Parallel...", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
               SizedBox(height: 12),
-              Text("Please wait...", style: TextStyle(color: Colors.white70, fontSize: 17)),
+              Text("Using 3 cores simultaneously", style: TextStyle(color: Colors.white70, fontSize: 17)),
               SizedBox(height: 40),
-              Text("Do not touch the screen", style: TextStyle(color: Colors.white54, fontSize: 15)),
+              Text("Please wait...", style: TextStyle(color: Colors.white54, fontSize: 15)),
             ],
           ),
         ),

@@ -32,7 +32,7 @@ class ImagePreprocessor {
     final int originalWidth = image.width;
     final int originalHeight = image.height;
 
-    // LetterBox Resize to 224x224
+    // Detection model uses 640x640
     final double scale = (inputWidth / originalWidth).clamp(0.0, double.infinity);
     final double scale2 = (inputHeight / originalHeight).clamp(0.0, double.infinity);
     final double ratio = scale < scale2 ? scale : scale2;
@@ -42,7 +42,7 @@ class ImagePreprocessor {
 
     final resized = img.copyResize(image, width: resizedWidth, height: resizedHeight);
 
-    // Letterbox canvas with gray padding
+    // Letterbox canvas with gray padding for 640x640
     final canvas = img.Image(width: inputWidth, height: inputHeight);
     img.fill(canvas, color: img.ColorRgb8(114, 114, 114));
 
@@ -51,7 +51,7 @@ class ImagePreprocessor {
 
     img.compositeImage(canvas, resized, dstX: padX, dstY: padY);
 
-    // Tensor [1, 224, 224, 3]
+    // Tensor [1, 640, 640, 3]
     final input = List.generate(
       1,
       (_) => List.generate(
@@ -80,15 +80,15 @@ class ImagePreprocessor {
     );
   }
 
-  static img.Image? _convertCameraImageToRGB(CameraImage image) {
+  static img.Image? _convertCameraImageToRGB(CameraImage cameraImage) {
     try {
-      final int width = image.width;
-      final int height = image.height;
+      final int width = cameraImage.width;
+      final int height = cameraImage.height;
       final img.Image rgbImage = img.Image(width: width, height: height);
 
-      if (image.format.group == ImageFormatGroup.yuv420 && image.planes.isNotEmpty) {
-        final Uint8List yPlane = image.planes[0].bytes;
-        final int rowStride = image.planes[0].bytesPerRow;
+      if (cameraImage.format.group == ImageFormatGroup.yuv420 && cameraImage.planes.isNotEmpty) {
+        final Uint8List yPlane = cameraImage.planes[0].bytes;
+        final int rowStride = cameraImage.planes[0].bytesPerRow;
 
         for (int y = 0; y < height; y++) {
           for (int x = 0; x < width; x++) {
@@ -102,12 +102,22 @@ class ImagePreprocessor {
         return rgbImage;
       }
 
-      return img.Image.fromBytes(
-        width: width,
-        height: height,
-        bytes: image.planes[0].bytes.buffer,
-        format: img.Format.uint8,
-      );
+      // Fallback: try to convert from bytes if available
+      if (cameraImage.planes.isNotEmpty && cameraImage.planes[0].bytes.isNotEmpty) {
+        try {
+          return img.Image.fromBytes(
+            width: width,
+            height: height,
+            bytes: cameraImage.planes[0].bytes.buffer,
+            format: img.Format.uint8,
+          );
+        } catch (e) {
+          print("Fallback conversion error: $e");
+          return null;
+        }
+      }
+
+      return null;
     } catch (e) {
       print("Camera conversion error: $e");
       return null;

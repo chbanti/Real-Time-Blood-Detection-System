@@ -17,33 +17,35 @@ class DetectionPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (detections.isEmpty) return;
 
+    // Calculate the display area
+    final double displayWidth = size.width;
+    final double displayHeight = size.height;
+    
+    // Calculate scale to fit the image in the canvas (maintaining aspect ratio)
+    final double scaleX = displayWidth / imageWidth;
+    final double scaleY = displayHeight / imageHeight;
+    final double scale = scaleX < scaleY ? scaleX : scaleY;
+
+    // Calculate offsets to center the image
+    final double offsetX = (displayWidth - (imageWidth * scale)) / 2;
+    final double offsetY = (displayHeight - (imageHeight * scale)) / 2;
+
     final paint = Paint()
       ..color = Colors.green
       ..strokeWidth = 3
       ..style = PaintingStyle.stroke;
 
-    // Calculate scale to fit the image in the canvas
-    final scale = min(
-      size.width / imageWidth,
-      size.height / imageHeight,
-    );
-
-    final displayedWidth = imageWidth * scale;
-    final displayedHeight = imageHeight * scale;
-
-    final dx = (size.width - displayedWidth) / 2;
-    final dy = (size.height - displayedHeight) / 2;
-
     for (final d in detections) {
-      // Scale box coordinates to fit the displayed image
+      // Map the box from image coordinates to display coordinates
+      // The detection boxes are already in original image coordinates
       final rect = Rect.fromLTRB(
-        dx + d.box.left * scale,
-        dy + d.box.top * scale,
-        dx + d.box.right * scale,
-        dy + d.box.bottom * scale,
+        offsetX + d.box.left * scale,
+        offsetY + d.box.top * scale,
+        offsetX + d.box.right * scale,
+        offsetY + d.box.bottom * scale,
       );
       
-      // Draw bounding box with green color
+      // Draw bounding box
       canvas.drawRect(rect, paint);
 
       // Draw confidence text

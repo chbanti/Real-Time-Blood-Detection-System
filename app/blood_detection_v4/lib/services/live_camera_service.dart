@@ -1,11 +1,11 @@
-
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
-import '../utils/constants.dart';
+
 import '../models/detection.dart';
 import '../models/image_info.dart';
 import '../utils/yolo_decoder.dart';
@@ -22,6 +22,9 @@ class LiveCameraService {
   double _lastImageHeight = 480;
   bool _isFrontCamera = false;
   
+  // Confidence threshold for live camera
+  double _confidenceThreshold = 0.1;
+  
   Function(List<Detection> detections, ui.Image? frameImage)? onDetection;
 
   bool get isStreaming => _isStreaming;
@@ -29,13 +32,19 @@ class LiveCameraService {
   double get lastImageWidth => _lastImageWidth;
   double get lastImageHeight => _lastImageHeight;
   bool get isFrontCamera => _isFrontCamera;
+  
+  double get confidenceThreshold => _confidenceThreshold;
+  set confidenceThreshold(double value) {
+    _confidenceThreshold = value.clamp(0.0, 1.0);
+    print("🔧 Confidence threshold set to: $_confidenceThreshold");
+  }
 
   Future<void> initializeCamera(Function(List<Detection>, ui.Image?) callback) async {
     onDetection = callback;
     
     if (_interpreter == null) {
       _interpreter = await Interpreter.fromAsset('assets/models/detector.tflite');
-      print("✅ Live camera detector model loaded");
+      print("✅ Live camera detector model loaded (640x640)");
       print("Input Shape: ${_interpreter!.getInputTensor(0).shape}");
     }
   }
@@ -45,7 +54,6 @@ class LiveCameraService {
       await _controller!.dispose();
     }
 
-    // Store camera lens direction
     _isFrontCamera = camera.lensDirection == CameraLensDirection.front;
 
     _controller = CameraController(
@@ -67,6 +75,7 @@ class LiveCameraService {
     _isStreaming = true;
     print("📹 Camera streaming started at ${_lastImageWidth}x${_lastImageHeight}");
     print("📹 Camera lens: ${_isFrontCamera ? 'Front' : 'Back'}");
+    print("📹 Confidence threshold: $_confidenceThreshold");
   }
 
   void _processCameraImage(CameraImage cameraImage) {
@@ -79,7 +88,8 @@ class LiveCameraService {
       final image = _convertCameraImageToImage(cameraImage);
       if (image == null) return;
 
-      final imageInfo = _preprocessImage(image);
+      // Preprocess for detection (640x640)
+      final imageInfo = _preprocessImageForDetection(image);
       
       final output = List.generate(
         1,
@@ -90,8 +100,10 @@ class LiveCameraService {
       
       final detections = YoloDecoder.decode(output, imageInfo);
       
-      // Filter detections by confidence threshold
-      final filteredDetections = detections.where((d) => d.confidence > liveConfidenceThreshold).toList();
+      // Filter by confidence threshold
+      final filteredDetections = detections
+          .where((d) => d.confidence > _confidenceThreshold)
+          .toList();
       
       final displayImage = _convertToUiImage(image);
       
@@ -102,54 +114,13 @@ class LiveCameraService {
     }
   }
 
-  img.Image? _convertCameraImageToImage(CameraImage cameraImage) {
-    try {
-      final int width = cameraImage.width;
-      final int height = cameraImage.height;
-      
-      final img.Image image = img.Image(width: width, height: height);
-
-      if (cameraImage.format.group == ImageFormatGroup.yuv420) {
-        final Uint8List yPlane = cameraImage.planes[0].bytes;
-        final Uint8List uPlane = cameraImage.planes[1].bytes;
-        final Uint8List vPlane = cameraImage.planes[2].bytes;
-        
-        final int yRowStride = cameraImage.planes[0].bytesPerRow;
-        final int uvRowStride = cameraImage.planes[1].bytesPerRow;
-        final int uvPixelStride = cameraImage.planes[1].bytesPerPixel ?? 1;
-
-        for (int y = 0; y < height; y++) {
-          for (int x = 0; x < width; x++) {
-            final int yIndex = y * yRowStride + x;
-            final int uvIndex = (y ~/ 2) * uvRowStride + (x ~/ 2) * uvPixelStride;
-            
-            if (yIndex < yPlane.length && uvIndex < uPlane.length && uvIndex < vPlane.length) {
-              final int yValue = yPlane[yIndex] & 0xFF;
-              final int uValue = uPlane[uvIndex] & 0xFF;
-              final int vValue = vPlane[uvIndex] & 0xFF;
-              
-              int r = (yValue + 1.402 * (vValue - 128)).round().clamp(0, 255);
-              int g = (yValue - 0.344 * (uValue - 128) - 0.714 * (vValue - 128)).round().clamp(0, 255);
-              int b = (yValue + 1.772 * (uValue - 128)).round().clamp(0, 255);
-              
-              image.setPixelRgb(x, y, r, g, b);
-            }
-          }
-        }
-        return image;
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  ImageInfoData _preprocessImage(img.Image image) {
+  // Detection preprocessing - 640x640
+  ImageInfoData _preprocessImageForDetection(img.Image image) {
     final int originalWidth = image.width;
     final int originalHeight = image.height;
 
-    const int inputWidth = 224;
-    const int inputHeight = 224;
+    const int inputWidth = 640;   // Detection uses 640
+    const int inputHeight = 640;  // Detection uses 640
 
     final double scale = (inputWidth / originalWidth).clamp(0.0, double.infinity);
     final double scale2 = (inputHeight / originalHeight).clamp(0.0, double.infinity);
@@ -194,6 +165,47 @@ class LiveCameraService {
       padX: padX.toDouble(),
       padY: padY.toDouble(),
     );
+  }
+
+  img.Image? _convertCameraImageToImage(CameraImage cameraImage) {
+    try {
+      final int width = cameraImage.width;
+      final int height = cameraImage.height;
+      
+      final img.Image image = img.Image(width: width, height: height);
+
+      if (cameraImage.format.group == ImageFormatGroup.yuv420) {
+        final Uint8List yPlane = cameraImage.planes[0].bytes;
+        final Uint8List uPlane = cameraImage.planes[1].bytes;
+        final Uint8List vPlane = cameraImage.planes[2].bytes;
+        
+        final int yRowStride = cameraImage.planes[0].bytesPerRow;
+        final int uvRowStride = cameraImage.planes[1].bytesPerRow;
+        final int uvPixelStride = cameraImage.planes[1].bytesPerPixel ?? 1;
+
+        for (int y = 0; y < height; y++) {
+          for (int x = 0; x < width; x++) {
+            final int yIndex = y * yRowStride + x;
+            final int uvIndex = (y ~/ 2) * uvRowStride + (x ~/ 2) * uvPixelStride;
+            
+            if (yIndex < yPlane.length && uvIndex < uPlane.length && uvIndex < vPlane.length) {
+              final int yValue = yPlane[yIndex] & 0xFF;
+              final int uValue = uPlane[uvIndex] & 0xFF;
+              final int vValue = vPlane[uvIndex] & 0xFF;
+              
+              int r = (yValue + 1.402 * (vValue - 128)).round().clamp(0, 255);
+              int g = (yValue - 0.344 * (uValue - 128) - 0.714 * (vValue - 128)).round().clamp(0, 255);
+              int b = (yValue + 1.772 * (uValue - 128)).round().clamp(0, 255);
+              image.setPixelRgb(x, y, r, g, b);
+            }
+          }
+        }
+        return image;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
   }
 
   ui.Image? _convertToUiImage(img.Image image) {

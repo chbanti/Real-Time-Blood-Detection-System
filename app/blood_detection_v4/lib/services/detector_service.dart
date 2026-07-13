@@ -16,9 +16,20 @@ class DetectorService {
 
     try {
       _interpreter = await Interpreter.fromAsset('assets/models/detector.tflite');
-      print("✅ Detector model loaded (224x224)");
-      print("Input Shape : ${_interpreter!.getInputTensor(0).shape}");
-      print("Output Shape: ${_interpreter!.getOutputTensor(0).shape}");
+      
+      final inputShape = _interpreter!.getInputTensor(0).shape;
+      final outputShape = _interpreter!.getOutputTensor(0).shape;
+      
+      print("✅ Detector model loaded (640x640)");
+      print("Input Shape : $inputShape");
+      print("Output Shape: $outputShape");
+      
+      // Check if model is actually 640x640
+      if (inputShape.length >= 3) {
+        final height = inputShape[1];
+        final width = inputShape[2];
+        print("📐 Model expects: ${width}x${height}");
+      }
     } catch (e) {
       print("❌ Failed to load detector model: $e");
       rethrow;
@@ -31,7 +42,7 @@ class DetectorService {
     try {
       final imageInfo = await ImagePreprocessor.preprocess(imageFile);
 
-      // Output shape for 224x224 model: [1, 300, 6] (same as before)
+      // Output shape: [1, 300, 6] for YOLO
       final output = List.generate(
         1,
         (_) => List.generate(300, (_) => List.filled(6, 0.0)),
